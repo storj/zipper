@@ -81,7 +81,7 @@ func TestWriter(t *testing.T) {
 	}
 
 	// read it back
-	r, err := NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	r, err := Open(SourceFromReaderAt(bytes.NewReader(buf.Bytes()), int64(buf.Len())))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestWriterUTF8(t *testing.T) {
 	}
 
 	// read it back
-	r, err := NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	r, err := Open(SourceFromReaderAt(bytes.NewReader(buf.Bytes()), int64(buf.Len())))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestWriterOffset(t *testing.T) {
 	}
 
 	// read it back
-	r, err := NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	r, err := Open(SourceFromReaderAt(bytes.NewReader(buf.Bytes()), int64(buf.Len())))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -37,7 +37,7 @@ func TestOver65kFiles(t *testing.T) {
 		t.Fatalf("Writer.Close: %v", err)
 	}
 	s := buf.String()
-	zr, err := NewReader(strings.NewReader(s), int64(len(s)))
+	zr, err := Open(SourceFromReaderAt(strings.NewReader(s), int64(len(s))))
 	if err != nil {
 		t.Fatalf("NewReader: %v", err)
 	}
@@ -417,7 +417,8 @@ func suffixIsZip64(t *testing.T, zip sizedReaderAt) bool {
 		return false
 	}
 
-	dirOff, err := findDirectory64End(zip, zip.Size()-int64(len(d))+int64(sigOff))
+	dirOff, err := findDirectory64End(SourceFromReaderAt(zip, zip.Size()),
+		zip.Size()-int64(len(d))+int64(sigOff))
 	if err != nil {
 		t.Fatalf("findDirectory64End: %v", err)
 	}
@@ -481,7 +482,7 @@ func testZip64(t testing.TB, size int64) *rleBuffer {
 	}
 
 	// read back zip file and check that we get to the end of it
-	r, err := NewReader(buf, int64(buf.Size()))
+	r, err := Open(SourceFromReaderAt(buf, int64(buf.Size())))
 	if err != nil {
 		t.Fatal("reader:", err)
 	}
@@ -549,7 +550,7 @@ func testValidHeader(h *FileHeader, t *testing.T) {
 	}
 
 	b := buf.Bytes()
-	zf, err := NewReader(bytes.NewReader(b), int64(len(b)))
+	zf, err := Open(SourceFromReaderAt(bytes.NewReader(b), int64(len(b))))
 	if err != nil {
 		t.Fatalf("got %v, expected nil", err)
 	}
