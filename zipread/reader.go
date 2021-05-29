@@ -14,6 +14,7 @@ import (
 	"hash/crc32"
 	"io"
 	"io/fs"
+	"math"
 	"path"
 	"sort"
 	"strings"
@@ -72,7 +73,7 @@ func (z *Reader) init(source Source) (err error) {
 	z.size = size
 	z.File = make([]*File, 0, end.directoryRecords)
 	z.Comment = end.comment
-	rs, _, err := source.RangeFromLeft(context.TODO(), int64(end.directoryOffset), size-int64(end.directoryOffset))
+	rs, err := source.Range(context.TODO(), int64(end.directoryOffset), size-int64(end.directoryOffset))
 	if err != nil {
 		return err
 	}
@@ -120,19 +121,6 @@ func (z *Reader) decompressor(method uint16) Decompressor {
 	return dcomp
 }
 
-// DataOffset returns the offset of the file's possibly-compressed
-// data, relative to the beginning of the zip file.
-//
-// Most callers should instead use Open, which transparently
-// decompresses data and verifies checksums.
-func (f *File) DataOffset() (offset int64, err error) {
-	bodyOffset, err := f.findBodyOffset()
-	if err != nil {
-		return
-	}
-	return f.headerOffset + bodyOffset, nil
-}
-
 type closerFunc func() error
 
 func (f closerFunc) Close() error { return f() }
@@ -140,10 +128,6 @@ func (f closerFunc) Close() error { return f() }
 // Open returns a ReadCloser that provides access to the File's contents.
 // Multiple files may be read concurrently.
 func (f *File) Open() (io.ReadCloser, error) {
-	bodyOffset, err := f.findBodyOffset()
-	if err != nil {
-		return nil, err
-	}
 	size := int64(f.CompressedSize64)
 
 	dcomp := f.zip.decompressor(f.Method)
@@ -151,12 +135,29 @@ func (f *File) Open() (io.ReadCloser, error) {
 		return nil, ErrAlgorithm
 	}
 
-	rr, _, err := f.zips.RangeFromLeft(context.TODO(), f.headerOffset+bodyOffset, size)
+	// This sucks. The zip central directory entry doesn't have
+	// enough information to actually figure out the exact body offset,
+	// specifically due to the Extra field, which apparently does not
+	// always match in the CEN and LOC headers.
+	// We could either do an additional round trip to read the local
+	// file header, or we could just assume the worst (64KB) and
+	// request extra, limiting it when we find out. We do this
+	// second thing since round trips are the worse outcome.
+	// This is one of the areas where ZIPs don't make a good
+	// remote pack format.
+	const worstCaseExtra = math.MaxUint16 // 64 KB
+
+	rr, err := f.zips.Range(context.TODO(), f.headerOffset, size+fileHeaderLen+int64(len(f.Name))+worstCaseExtra)
 	if err != nil {
 		return nil, err
 	}
+	data := bufio.NewReader(rr)
+	err = f.validateFileHeader(data)
+	if err != nil {
+		return nil, errs.Combine(err, rr.Close())
+	}
 
-	rc := dcomp(rr)
+	rc := dcomp(io.LimitReader(data, size))
 
 	return &checksumReader{
 		rc: struct {
@@ -215,28 +216,28 @@ func (r *checksumReader) Read(b []byte) (n int, err error) {
 
 func (r *checksumReader) Close() error { return r.rc.Close() }
 
-// findBodyOffset does the minimum work to verify the file has a header
-// and returns the file body offset.
-func (f *File) findBodyOffset() (_ int64, err error) {
-	var buf [fileHeaderLen]byte
-
-	rr, _, err := f.zips.RangeFromLeft(context.TODO(), f.headerOffset, fileHeaderLen)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { err = errs.Combine(err, rr.Close()) }()
-	if _, err = io.ReadFull(rr, buf[:]); err != nil {
-		return 0, err
+// validateFileHeader reads off the header, fast-forwarding data to
+// start at the content body.
+func (f *File) validateFileHeader(data io.Reader) (err error) {
+	buf := make([]byte, fileHeaderLen+len(f.Name))
+	if _, err = io.ReadFull(data, buf[:]); err != nil {
+		return err
 	}
 
 	b := readBuf(buf[:])
 	if sig := b.uint32(); sig != fileHeaderSignature {
-		return 0, ErrFormat
+		return ErrFormat
 	}
 	b = b[22:] // skip over most of the header
 	filenameLen := int(b.uint16())
 	extraLen := int(b.uint16())
-	return int64(fileHeaderLen + filenameLen + extraLen), nil
+	if filenameLen != len(f.Name) {
+		return ErrFormat
+	}
+	if _, err = io.ReadFull(data, make([]byte, extraLen)); err != nil {
+		return err
+	}
+	return nil
 }
 
 // readDirectoryHeader attempts to read a directory header from r.
@@ -420,7 +421,7 @@ func readDirectoryEnd(source Source) (dir *directoryEnd, size int64, err error) 
 		buf = make([]byte, int(bLen))
 
 		var r io.ReadCloser
-		r, size, err = source.RangeFromRight(context.TODO(), bLen)
+		r, size, err = source.RangeFromEnd(context.TODO(), bLen)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -492,7 +493,7 @@ func findDirectory64End(source Source, directoryEndOffset int64) (int64, error) 
 	}
 	buf := make([]byte, directory64LocLen)
 
-	r, _, err := source.RangeFromLeft(context.TODO(), locOffset, directory64LocLen)
+	r, err := source.Range(context.TODO(), locOffset, directory64LocLen)
 	if err != nil {
 		return -1, err
 	}
@@ -522,7 +523,7 @@ func findDirectory64End(source Source, directoryEndOffset int64) (int64, error) 
 func readDirectory64End(source Source, offset int64, d *directoryEnd) (err error) {
 	buf := make([]byte, directory64EndLen)
 
-	r, _, err := source.RangeFromLeft(context.TODO(), offset, directory64EndLen)
+	r, err := source.Range(context.TODO(), offset, directory64EndLen)
 	if err != nil {
 		return err
 	}
@@ -684,6 +685,19 @@ func fileEntryLess(x, y string) bool {
 	xdir, xelem, _ := split(x)
 	ydir, yelem, _ := split(y)
 	return xdir < ydir || xdir == ydir && xelem < yelem
+}
+
+func (r *Reader) OpenLookup(name string) (*File, error) {
+	r.initFileList()
+
+	e := r.openLookup(name)
+	if e == nil || !fs.ValidPath(name) {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+	}
+	if e.isDir || e.file == nil {
+		return nil, errs.Errorf("not a file")
+	}
+	return e.file, nil
 }
 
 // Open opens the named file in the ZIP archive,
