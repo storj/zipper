@@ -3,6 +3,8 @@ package zipper
 import (
 	"context"
 	"io"
+	"io/fs"
+	"log"
 	"strconv"
 	"strings"
 
@@ -13,7 +15,7 @@ import (
 
 const (
 	directoryOffsetKey = "github.com/jtolio/zipper:diroffset"
-	tailGuessAmount    = 64 * 1024 // 64K
+	minTailSearchSize  = 65 * 1024 // the zip reader will guess up to this much
 )
 
 type Pack struct {
@@ -77,9 +79,12 @@ func OpenPack(ctx context.Context, proj *uplink.Project, bucket, key string) (*P
 		return nil, err
 	}
 
-	prefetchAmount := int64(tailGuessAmount)
+	var prefetchAmount int64
 	if offset, err := getOffset(info); err == nil {
 		prefetchAmount = info.System.ContentLength - offset
+	}
+	if prefetchAmount < minTailSearchSize {
+		prefetchAmount = minTailSearchSize
 	}
 
 	source, err := zipread.PrefetchTail(ctx, &objectSource{
@@ -140,9 +145,9 @@ func (p *Pack) FileInfo(ctx context.Context, name string) (*FileInfo, error) {
 	}
 	return &FileInfo{
 		FileHeader: FileHeader{
-			Comment:    file.Comment,
-			Modified:   file.Modified,
-			Compressed: file.Method != zipread.Store,
+			Comment:      file.Comment,
+			Modified:     file.Modified,
+			Uncompressed: file.Method == zipread.Store,
 		},
 		Size: int64(file.UncompressedSize64),
 		file: file,
@@ -174,12 +179,17 @@ func (p *Pack) Open(ctx context.Context, name string) (*File, error) {
 	return fi.Open(ctx)
 }
 
+func (p *Pack) AsFS(ctx context.Context) fs.FS {
+	return p.zr
+}
+
 type objectSource struct {
 	proj        *uplink.Project
 	bucket, key string
 }
 
 func (o *objectSource) Range(ctx context.Context, offset, length int64) (io.ReadCloser, error) {
+	log.Printf("getting range: %d %d", offset, length)
 	if offset < 0 || length < 0 {
 		return nil, errs.Errorf("negative value")
 	}
@@ -194,14 +204,17 @@ func (o *objectSource) Range(ctx context.Context, offset, length int64) (io.Read
 }
 
 func (o *objectSource) RangeFromEnd(ctx context.Context, length int64) (rc io.ReadCloser, size int64, err error) {
+	log.Printf("getting range from end: %d", length)
 	if length < 0 {
 		return nil, 0, errs.Errorf("negative value")
 	}
 	dl, err := o.proj.DownloadObject(ctx, o.bucket, o.key, &uplink.DownloadOptions{
 		Offset: -length,
+		Length: -1,
 	})
 	if err != nil {
 		return nil, 0, err
 	}
+	log.Printf("got range from end with overall length %d", dl.Info().System.ContentLength)
 	return dl, dl.Info().System.ContentLength, nil
 }

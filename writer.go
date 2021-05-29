@@ -20,9 +20,9 @@ type PendingPack struct {
 	meta    uplink.CustomMetadata
 }
 
-func CreatePack(ctx context.Context, p *uplink.Project, bucket, key string,
+func CreatePack(ctx context.Context, proj *uplink.Project, bucket, key string,
 	options *uplink.UploadOptions) (*PendingPack, error) {
-	u, err := p.UploadObject(ctx, bucket, key, options)
+	u, err := proj.UploadObject(ctx, bucket, key, options)
 	if err != nil {
 		return nil, err
 	}
@@ -44,18 +44,21 @@ func (p *PendingPack) SetCustomMetadata(custom uplink.CustomMetadata) {
 }
 
 type FileHeader struct {
-	Comment    string
-	Modified   time.Time
-	Compressed bool
+	Comment      string
+	Modified     time.Time
+	Uncompressed bool
 }
 
 type FileWriter struct {
 	io.Writer
 }
 
-func (p *PendingPack) Add(ctx context.Context, name string, options FileHeader) (*FileWriter, error) {
+func (p *PendingPack) Add(ctx context.Context, name string, options *FileHeader) (*FileWriter, error) {
 	if strings.HasSuffix(name, "/") {
 		return nil, errs.Errorf("adding directories to packs not supported")
+	}
+	if options == nil {
+		options = &FileHeader{}
 	}
 	header := &zip.FileHeader{
 		Name:     name,
@@ -63,7 +66,9 @@ func (p *PendingPack) Add(ctx context.Context, name string, options FileHeader) 
 		Modified: options.Modified,
 		Method:   zip.Store,
 	}
-	if options.Compressed {
+	if options.Uncompressed {
+		header.Method = zip.Store
+	} else {
 		header.Method = zip.Deflate
 	}
 	w, err := p.z.CreateHeader(header)

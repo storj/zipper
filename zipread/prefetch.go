@@ -16,6 +16,9 @@ type prefetchedTailSource struct {
 
 func PrefetchTail(ctx context.Context, s Source, amount int64) (Source, error) {
 	rc, size, err := s.RangeFromEnd(ctx, amount)
+	if err != nil {
+		return nil, err
+	}
 	if size < amount {
 		amount = size
 	}
@@ -66,6 +69,9 @@ func (s *prefetchedTailSource) Range(ctx context.Context, offset, length int64) 
 }
 
 func (s *prefetchedTailSource) RangeFromEnd(ctx context.Context, length int64) (rc io.ReadCloser, sourceSize int64, err error) {
+	if length > s.size {
+		length = s.size
+	}
 	rc, err = s.Range(ctx, s.size-length, length)
 	return rc, s.size, err
 }
