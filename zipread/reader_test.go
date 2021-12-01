@@ -6,8 +6,10 @@ package zipread
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -499,6 +501,7 @@ func readTestZip(t *testing.T, zt ZipTest) {
 		for j, ft := range zt.File {
 			go func(j int, ft ZipTestFile) {
 				readTestFile(t, zt, ft, z.File[j])
+				readTestFileAsGZip(t, zt, ft, z.File[j])
 				done <- true
 			}(j, ft)
 			n++
@@ -580,6 +583,75 @@ func readTestFile(t *testing.T, zt ZipTest, ft ZipTestFile, f *File) {
 	}
 
 	for i, b := range b.Bytes() {
+		if b != c[i] {
+			t.Errorf("%s: content[%d]=%q want %q", f.Name, i, b, c[i])
+			return
+		}
+	}
+}
+
+func readTestFileAsGZip(t *testing.T, zt ZipTest, ft ZipTestFile, f *File) {
+
+	r, err := f.OpenAsGzip()
+	if err != nil {
+		if !errors.Is(err, ErrAlgorithm) {
+			t.Errorf("%v", err)
+		}
+		return
+	}
+
+	// For very large files, just check that the size is correct.
+	// The content is expected to be all zeros.
+	// Don't bother uncompressing: too big.
+	if ft.Content == nil && ft.File == "" && ft.Size > 0 {
+		r.Close()
+		return
+	}
+
+	// check compressed gzip stream size
+	var b bytes.Buffer
+	_, err = io.Copy(&b, r)
+	if err != ft.ContentErr {
+		t.Errorf("copying contents: %v (want %v)", err, ft.ContentErr)
+	}
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	r.Close()
+
+	expectedSize := f.CompressedSize64 + 18
+	if g := uint64(b.Len()); g != expectedSize {
+		t.Errorf("%v: read %v bytes but f.UncompressedSize == %v", f.Name, g, expectedSize)
+	}
+
+	// check decompressed gzip stream size
+	var b2 bytes.Buffer
+	gz, err := gzip.NewReader(&b)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	_, err = io.Copy(&b2, gz)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	var c []byte
+	if ft.Content != nil {
+		c = ft.Content
+	} else if c, err = os.ReadFile("testdata/" + ft.File); err != nil {
+		t.Error(err)
+		return
+	}
+
+	if b2.Len() != len(c) {
+		t.Errorf("%s: len=%d, want %d", f.Name, b2.Len(), len(c))
+		return
+	}
+
+	for i, b := range b2.Bytes() {
 		if b != c[i] {
 			t.Errorf("%s: content[%d]=%q want %q", f.Name, i, b, c[i])
 			return
