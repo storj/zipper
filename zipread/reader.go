@@ -179,7 +179,7 @@ func (f *File) Open() (io.ReadCloser, error) {
 }
 
 // OpenAsGzip returns a ReadCloser that provides access to the File's compressed contents.
-// This method returns and ErrAlgorithm error if the zip is not compressed using deflate.
+// This method returns an ErrAlgorithm error if the zip is not compressed using deflate.
 func (f *File) OpenAsGzip() (io.ReadCloser, error) {
 	size := int64(f.CompressedSize64)
 
