@@ -7,6 +7,7 @@ package zipread
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"hash/crc32"
 	"io"
 	"io/fs"
+	"io/ioutil"
 	"math"
 	"path"
 	"sort"
@@ -95,6 +97,7 @@ func (z *Reader) init(source Source) (err error) {
 		}
 		z.File = append(z.File, f)
 	}
+
 	if uint16(len(z.File)) != uint16(end.directoryRecords) { // only compare 16 bits here
 		// Return the readDirectoryHeader error if we read
 		// the wrong number of directory entries.
@@ -173,6 +176,44 @@ func (f *File) Open() (io.ReadCloser, error) {
 		hash: crc32.NewIEEE(),
 		f:    f,
 	}, nil
+}
+
+// OpenAsGzip returns a ReadCloser that provides access to the File's compressed contents.
+// This method returns an ErrAlgorithm error if the zip is not compressed using deflate.
+func (f *File) OpenAsGzip() (io.ReadCloser, error) {
+	size := int64(f.CompressedSize64)
+
+	if f.Method != Deflate {
+		return nil, ErrAlgorithm
+	}
+	const worstCaseExtra = math.MaxUint16 // 64 KB
+	rr, err := f.zips.Range(context.TODO(), f.headerOffset, size+fileHeaderLen+int64(len(f.Name))+worstCaseExtra)
+	if err != nil {
+		return nil, err
+	}
+	data := bufio.NewReader(rr)
+	err = f.validateFileHeader(data)
+	if err != nil {
+		return nil, errs.Combine(err, rr.Close())
+	}
+
+	return ioutil.NopCloser(GzipWrapper(io.LimitReader(data, size), f.CRC32, uint32(f.UncompressedSize64))), nil
+}
+
+// GzipWrapper wraps a reader with gzip headers and footers.
+func GzipWrapper(r io.Reader, digest, decompressedSize uint32) io.Reader {
+	const (
+		gzipID1     = 0x1f
+		gzipID2     = 0x8b
+		gzipDeflate = 8
+		osUnknown   = 255
+	)
+	header := [10]byte{0: gzipID1, 1: gzipID2, 2: gzipDeflate, 8: 2, 9: osUnknown}
+	footer := [8]byte{}
+	binary.LittleEndian.PutUint32(footer[:4], digest)
+	binary.LittleEndian.PutUint32(footer[4:8], decompressedSize)
+
+	return io.MultiReader(bytes.NewReader(header[:]), r, bytes.NewReader(footer[:]))
 }
 
 type checksumReader struct {
