@@ -131,6 +131,11 @@ func (p *Pack) List() []string {
 	return rv
 }
 
+// Reader allows access to the underlying Reader
+func (p *Pack) Reader() *zipread.Reader {
+	return p.zr
+}
+
 type FileInfo struct {
 	FileHeader
 	Size int64
