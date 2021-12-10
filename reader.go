@@ -165,6 +165,27 @@ func (fi *FileInfo) Open(ctx context.Context) (*File, error) {
 	}, nil
 }
 
+// OpenNative returns the optimal file content based on how it is stored within the zip archive.
+// If the compression method is "store" - no compression - the file is trivially returned.
+// If the compression method is "deflate" and the client supports gzip, the contents is returned
+// without being decompressed, but wrapped as a gzip format.  Other methods return an error.
+func (fi *FileInfo) OpenNative(ctx context.Context, allowGzip bool) (*File, bool, error) {
+	var err error
+	var rc io.ReadCloser
+	isDeflate := fi.file.Method == zipread.Deflate
+	if allowGzip && isDeflate {
+		rc, err = fi.file.OpenAsGzip()
+	} else if isDeflate || fi.file.Method == zipread.Store {
+		rc, err = fi.file.Open()
+	} else {
+		return nil, false, zipread.ErrAlgorithm
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return &File{FileInfo: fi, ReadCloser: rc}, isDeflate, nil
+}
+
 type File struct {
 	*FileInfo
 
