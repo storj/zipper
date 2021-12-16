@@ -13,6 +13,11 @@ import (
 	"storj.io/uplink"
 )
 
+const (
+	contentTypeKey = "content-type"
+	contentTypeZip = "application/zip"
+)
+
 type PendingPack struct {
 	u       *uplink.Upload
 	z       *zip.Writer
@@ -89,9 +94,13 @@ func (p *PendingPack) Commit(ctx context.Context) error {
 
 	custom := p.meta
 	if custom == nil {
-		custom = make(uplink.CustomMetadata, 1)
+		custom = make(uplink.CustomMetadata, 2)
 	}
+
 	custom[directoryOffsetKey] = strconv.FormatInt(p.counter.N, 16)
+	if _, set := custom[contentTypeKey]; !set {
+		custom[contentTypeKey] = contentTypeZip
+	}
 
 	err = p.u.SetCustomMetadata(ctx, custom)
 	if err != nil {
