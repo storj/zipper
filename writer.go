@@ -56,11 +56,15 @@ type FileHeader struct {
 
 type FileWriter struct {
 	io.Writer
-	// ContentOffset is the offset relative to the start of the ZIP archive.
-	// FileWriter will start writing at this position.
-	// Clients can keep track of this offset if they want to efficiently
-	// download the file without reading the central directory entry.
-	ContentOffset int64
+	contentOffset int64
+}
+
+// ContentOffset is the offset relative to the start of the ZIP archive.
+// FileWriter will start writing at this position.
+// Clients can keep track of this offset if they want to efficiently
+// download the file without reading the central directory entry.
+func (fw *FileWriter) ContentOffset() int64 {
+	return fw.contentOffset
 }
 
 func (p *PendingPack) Add(ctx context.Context, name string, options *FileHeader) (*FileWriter, error) {
@@ -92,7 +96,7 @@ func (p *PendingPack) Add(ctx context.Context, name string, options *FileHeader)
 	}
 	return &FileWriter{
 		Writer:        w,
-		ContentOffset: p.counter.N,
+		contentOffset: p.counter.N,
 	}, nil
 }
 
@@ -128,10 +132,6 @@ func (p *PendingPack) Commit(ctx context.Context) error {
 
 func (p *PendingPack) Abort() error {
 	return p.u.Abort()
-}
-
-func (p *PendingPack) Pos() int64 {
-	return p.counter.N
 }
 
 type countingWriter struct {
