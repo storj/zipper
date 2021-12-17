@@ -7,8 +7,8 @@ import (
 	"io/ioutil"
 	"log"
 
-	"github.com/jtolio/zipper"
 	"storj.io/uplink"
+	"storj.io/zipper"
 )
 
 var (

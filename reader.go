@@ -8,9 +8,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jtolio/zipper/zipread"
 	"github.com/zeebo/errs/v2"
+
 	"storj.io/uplink"
+	"storj.io/zipper/zipread"
 )
 
 const (
