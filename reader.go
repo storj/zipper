@@ -179,7 +179,7 @@ func (fi *FileInfo) OpenAsGzipOrUncompressed(ctx context.Context, allowGzip bool
 		if err != nil {
 			return nil, false, 0, err
 		}
-		gzipSize := int64(fi.file.UncompressedSize64) + 18 // wrapper adds 18 bytes to deflate
+		gzipSize := int64(fi.file.CompressedSize64) + 18 // wrapper adds 18 bytes to deflate
 		return &File{FileInfo: fi, ReadCloser: rc}, true, gzipSize, nil
 	} else if isDeflate || fi.file.Method == zipread.Store {
 		rc, err = fi.file.Open()
