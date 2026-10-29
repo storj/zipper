@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"io/fs"
-	"log"
 	"strconv"
 	"strings"
 
@@ -216,7 +215,6 @@ type objectSource struct {
 }
 
 func (o *objectSource) Range(ctx context.Context, offset, length int64) (io.ReadCloser, error) {
-	log.Printf("getting range: %d %d", offset, length)
 	if offset < 0 || length < 0 {
 		return nil, errs.Errorf("negative value")
 	}
@@ -231,7 +229,6 @@ func (o *objectSource) Range(ctx context.Context, offset, length int64) (io.Read
 }
 
 func (o *objectSource) RangeFromEnd(ctx context.Context, length int64) (rc io.ReadCloser, size int64, err error) {
-	log.Printf("getting range from end: %d", length)
 	if length < 0 {
 		return nil, 0, errs.Errorf("negative value")
 	}
@@ -242,6 +239,5 @@ func (o *objectSource) RangeFromEnd(ctx context.Context, length int64) (rc io.Re
 	if err != nil {
 		return nil, 0, err
 	}
-	log.Printf("got range from end with overall length %d", dl.Info().System.ContentLength)
 	return dl, dl.Info().System.ContentLength, nil
 }
