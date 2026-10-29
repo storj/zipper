@@ -15,7 +15,6 @@ import (
 	"hash/crc32"
 	"io"
 	"io/fs"
-	"io/ioutil"
 	"math"
 	"path"
 	"sort"
@@ -197,7 +196,13 @@ func (f *File) OpenAsGzip() (io.ReadCloser, error) {
 		return nil, errs.Combine(err, rr.Close())
 	}
 
-	return ioutil.NopCloser(GzipWrapper(io.LimitReader(data, size), f.CRC32, uint32(f.UncompressedSize64))), nil
+	return struct {
+		io.Reader
+		io.Closer
+	}{
+		Reader: GzipWrapper(io.LimitReader(data, size), f.CRC32, uint32(f.UncompressedSize64)),
+		Closer: rr,
+	}, nil
 }
 
 // GzipWrapper wraps a reader with gzip headers and footers.

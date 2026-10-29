@@ -7,6 +7,7 @@ package zipread
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -1146,5 +1147,96 @@ func TestCVE202127919(t *testing.T) {
 	_, err = r.Open("test.txt")
 	if err != nil {
 		t.Errorf("Error reading file: %v", err)
+	}
+}
+
+// trackingSource is a Source that counts the readers it hands out which
+// haven't been closed yet.
+type trackingSource struct {
+	Source
+	open int
+}
+
+type trackedReadCloser struct {
+	io.ReadCloser
+	s      *trackingSource
+	closed bool
+}
+
+func (t *trackedReadCloser) Close() error {
+	if !t.closed {
+		t.closed = true
+		t.s.open--
+	}
+	return t.ReadCloser.Close()
+}
+
+func (s *trackingSource) track(rc io.ReadCloser) io.ReadCloser {
+	s.open++
+	return &trackedReadCloser{ReadCloser: rc, s: s}
+}
+
+func (s *trackingSource) Range(ctx context.Context, offset, length int64) (io.ReadCloser, error) {
+	rc, err := s.Source.Range(ctx, offset, length)
+	if err != nil {
+		return nil, err
+	}
+	return s.track(rc), nil
+}
+
+func (s *trackingSource) RangeFromEnd(ctx context.Context, length int64) (io.ReadCloser, int64, error) {
+	rc, size, err := s.Source.RangeFromEnd(ctx, length)
+	if err != nil {
+		return nil, 0, err
+	}
+	return s.track(rc), size, nil
+}
+
+func TestOpenClosesSource(t *testing.T) {
+	var buf bytes.Buffer
+	zw := NewWriter(&buf)
+	w, err := zw.CreateHeader(&FileHeader{Name: "file.txt", Method: Deflate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Repeat("hello, world\n", 1000)
+	if _, err := io.WriteString(w, content); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		open func(*File) (io.ReadCloser, error)
+	}{
+		{"Open", (*File).Open},
+		{"OpenAsGzip", (*File).OpenAsGzip},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			src := &trackingSource{Source: SourceFromReaderAt(bytes.NewReader(buf.Bytes()), int64(buf.Len()))}
+			zr, err := Open(src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if src.open != 0 {
+				t.Fatalf("%d readers left open after Open", src.open)
+			}
+
+			rc, err := tt.open(zr.File[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.Copy(io.Discard, rc); err != nil {
+				t.Fatal(err)
+			}
+			if err := rc.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if src.open != 0 {
+				t.Errorf("%d readers left open after Close", src.open)
+			}
+		})
 	}
 }
