@@ -97,7 +97,7 @@ func OpenPack(ctx context.Context, proj *uplink.Project, bucket, key string) (*P
 		return nil, err
 	}
 
-	zr, err := zipread.Open(source)
+	zr, err := zipread.OpenContext(ctx, source)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func (p *Pack) FileInfo(ctx context.Context, name string) (*FileInfo, error) {
 }
 
 func (fi *FileInfo) Open(ctx context.Context) (*File, error) {
-	rc, err := fi.file.Open()
+	rc, err := fi.file.OpenContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -175,14 +175,14 @@ func (fi *FileInfo) OpenAsGzipOrUncompressed(ctx context.Context, allowGzip bool
 	var rc io.ReadCloser
 	isDeflate := fi.file.Method == zipread.Deflate
 	if allowGzip && isDeflate {
-		rc, err = fi.file.OpenAsGzip()
+		rc, err = fi.file.OpenAsGzipContext(ctx)
 		if err != nil {
 			return nil, false, 0, err
 		}
 		gzipSize := int64(fi.file.CompressedSize64) + 18 // wrapper adds 18 bytes to deflate
 		return &File{FileInfo: fi, ReadCloser: rc}, true, gzipSize, nil
 	} else if isDeflate || fi.file.Method == zipread.Store {
-		rc, err = fi.file.Open()
+		rc, err = fi.file.OpenContext(ctx)
 		if err != nil {
 			return nil, false, 0, err
 		}

@@ -58,15 +58,21 @@ type File struct {
 }
 
 func Open(source Source) (*Reader, error) {
+	return OpenContext(context.Background(), source)
+}
+
+// OpenContext is like Open, but reads the zip's directory from source using
+// ctx.
+func OpenContext(ctx context.Context, source Source) (*Reader, error) {
 	zr := &Reader{}
-	if err := zr.init(source); err != nil {
+	if err := zr.init(ctx, source); err != nil {
 		return nil, err
 	}
 	return zr, nil
 }
 
-func (z *Reader) init(source Source) (err error) {
-	end, size, err := readDirectoryEnd(source)
+func (z *Reader) init(ctx context.Context, source Source) (err error) {
+	end, size, err := readDirectoryEnd(ctx, source)
 	if err != nil {
 		return err
 	}
@@ -74,7 +80,7 @@ func (z *Reader) init(source Source) (err error) {
 	z.size = size
 	z.File = make([]*File, 0, end.directoryRecords)
 	z.Comment = end.comment
-	rs, err := source.Range(context.TODO(), int64(end.directoryOffset), size-int64(end.directoryOffset))
+	rs, err := source.Range(ctx, int64(end.directoryOffset), size-int64(end.directoryOffset))
 	if err != nil {
 		return err
 	}
@@ -130,6 +136,12 @@ func (f closerFunc) Close() error { return f() }
 // Open returns a ReadCloser that provides access to the File's contents.
 // Multiple files may be read concurrently.
 func (f *File) Open() (io.ReadCloser, error) {
+	return f.OpenContext(context.Background())
+}
+
+// OpenContext is like Open, but reads the File's contents from the source
+// using ctx, so canceling ctx stops the read.
+func (f *File) OpenContext(ctx context.Context) (io.ReadCloser, error) {
 	size := int64(f.CompressedSize64)
 
 	dcomp := f.zip.decompressor(f.Method)
@@ -149,7 +161,7 @@ func (f *File) Open() (io.ReadCloser, error) {
 	// remote pack format.
 	const worstCaseExtra = math.MaxUint16 // 64 KB
 
-	rr, err := f.zips.Range(context.TODO(), f.headerOffset, size+fileHeaderLen+int64(len(f.Name))+worstCaseExtra)
+	rr, err := f.zips.Range(ctx, f.headerOffset, size+fileHeaderLen+int64(len(f.Name))+worstCaseExtra)
 	if err != nil {
 		return nil, err
 	}
@@ -180,13 +192,19 @@ func (f *File) Open() (io.ReadCloser, error) {
 // OpenAsGzip returns a ReadCloser that provides access to the File's compressed contents.
 // This method returns an ErrAlgorithm error if the zip is not compressed using deflate.
 func (f *File) OpenAsGzip() (io.ReadCloser, error) {
+	return f.OpenAsGzipContext(context.Background())
+}
+
+// OpenAsGzipContext is like OpenAsGzip, but reads the File's contents from
+// the source using ctx, so canceling ctx stops the read.
+func (f *File) OpenAsGzipContext(ctx context.Context) (io.ReadCloser, error) {
 	size := int64(f.CompressedSize64)
 
 	if f.Method != Deflate {
 		return nil, ErrAlgorithm
 	}
 	const worstCaseExtra = math.MaxUint16 // 64 KB
-	rr, err := f.zips.Range(context.TODO(), f.headerOffset, size+fileHeaderLen+int64(len(f.Name))+worstCaseExtra)
+	rr, err := f.zips.Range(ctx, f.headerOffset, size+fileHeaderLen+int64(len(f.Name))+worstCaseExtra)
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +477,7 @@ parseExtras:
 	return nil
 }
 
-func readDirectoryEnd(source Source) (dir *directoryEnd, size int64, err error) {
+func readDirectoryEnd(ctx context.Context, source Source) (dir *directoryEnd, size int64, err error) {
 	// look for directoryEndSignature in the last 1k, then in the last 65k
 	var buf []byte
 	var directoryEndOffset int64
@@ -467,7 +485,7 @@ func readDirectoryEnd(source Source) (dir *directoryEnd, size int64, err error) 
 		buf = make([]byte, int(bLen))
 
 		var r io.ReadCloser
-		r, size, err = source.RangeFromEnd(context.TODO(), bLen)
+		r, size, err = source.RangeFromEnd(ctx, bLen)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -514,9 +532,9 @@ func readDirectoryEnd(source Source) (dir *directoryEnd, size int64, err error) 
 
 	// These values mean that the file can be a zip64 file
 	if d.directoryRecords == 0xffff || d.directorySize == 0xffff || d.directoryOffset == 0xffffffff {
-		p, err := findDirectory64End(source, directoryEndOffset)
+		p, err := findDirectory64End(ctx, source, directoryEndOffset)
 		if err == nil && p >= 0 {
-			err = readDirectory64End(source, p, d)
+			err = readDirectory64End(ctx, source, p, d)
 		}
 		if err != nil {
 			return nil, 0, err
@@ -532,14 +550,14 @@ func readDirectoryEnd(source Source) (dir *directoryEnd, size int64, err error) 
 // findDirectory64End tries to read the zip64 locator just before the
 // directory end and returns the offset of the zip64 directory end if
 // found.
-func findDirectory64End(source Source, directoryEndOffset int64) (int64, error) {
+func findDirectory64End(ctx context.Context, source Source, directoryEndOffset int64) (int64, error) {
 	locOffset := directoryEndOffset - directory64LocLen
 	if locOffset < 0 {
 		return -1, nil // no need to look for a header outside the file
 	}
 	buf := make([]byte, directory64LocLen)
 
-	r, err := source.Range(context.TODO(), locOffset, directory64LocLen)
+	r, err := source.Range(ctx, locOffset, directory64LocLen)
 	if err != nil {
 		return -1, err
 	}
@@ -566,10 +584,10 @@ func findDirectory64End(source Source, directoryEndOffset int64) (int64, error) 
 
 // readDirectory64End reads the zip64 directory end and updates the
 // directory end with the zip64 directory end values.
-func readDirectory64End(source Source, offset int64, d *directoryEnd) (err error) {
+func readDirectory64End(ctx context.Context, source Source, offset int64, d *directoryEnd) (err error) {
 	buf := make([]byte, directory64EndLen)
 
-	r, err := source.Range(context.TODO(), offset, directory64EndLen)
+	r, err := source.Range(ctx, offset, directory64EndLen)
 	if err != nil {
 		return err
 	}
