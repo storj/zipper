@@ -24,7 +24,7 @@ func TestOver65kFiles(t *testing.T) {
 	buf := new(bytes.Buffer)
 	w := NewWriter(buf)
 	const nFiles = (1 << 16) + 42
-	for i := 0; i < nFiles; i++ {
+	for i := range nFiles {
 		_, err := w.CreateHeader(&FileHeader{
 			Name:   fmt.Sprintf("%d.dat", i),
 			Method: Store, // avoid Issue 6136 and Issue 6138
@@ -44,7 +44,7 @@ func TestOver65kFiles(t *testing.T) {
 	if got := len(zr.File); got != nFiles {
 		t.Fatalf("File contains %d files, want %d", got, nFiles)
 	}
-	for i := 0; i < nFiles; i++ {
+	for i := range nFiles {
 		want := fmt.Sprintf("%d.dat", i)
 		if zr.File[i].Name != want {
 			t.Fatalf("File(%d) = %q, want %q", i, zr.File[i].Name, want)
@@ -195,13 +195,6 @@ func (r *rleBuffer) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func min(x, y int64) int64 {
-	if x < y {
-		return x
-	}
-	return y
-}
-
 func memset(a []byte, b byte) {
 	if len(a) == 0 {
 		return
@@ -301,7 +294,7 @@ func TestZip64ManyRecords(t *testing.T) {
 	t.Parallel()
 	gen := func(numRec int) func(*Writer) {
 		return func(w *Writer) {
-			for i := 0; i < numRec; i++ {
+			for range numRec {
 				_, err := w.CreateHeader(&FileHeader{
 					Name:   "a.txt",
 					Method: Store,
@@ -460,7 +453,7 @@ func testZip64(t testing.TB, size int64) *rleBuffer {
 	for i := range chunk {
 		chunk[i] = '.'
 	}
-	for i := 0; i < chunks; i++ {
+	for range chunks {
 		_, err := f.Write(chunk)
 		if err != nil {
 			t.Fatal("write chunk:", err)
@@ -491,7 +484,7 @@ func testZip64(t testing.TB, size int64) *rleBuffer {
 	if err != nil {
 		t.Fatal("opening:", err)
 	}
-	for i := 0; i < chunks; i++ {
+	for range chunks {
 		_, err := io.ReadFull(rc, chunk)
 		if err != nil {
 			t.Fatal("read:", err)
