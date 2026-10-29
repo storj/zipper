@@ -498,7 +498,7 @@ func readTestZip(t *testing.T, zt ZipTest) {
 	// test simultaneous reads
 	n := 0
 	done := make(chan bool)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		for j, ft := range zt.File {
 			go func(j int, ft ZipTestFile) {
 				readTestFile(t, zt, ft, z.File[j])
@@ -835,7 +835,6 @@ func returnRecursiveZip() (r io.ReaderAt, size int64) {
 //
 // It's here in hex for the same reason as rZipBytes above: to avoid
 // problems with on-disk virus scanners or other zip processors.
-//
 func biggestZipBytes() []byte {
 	s := `
 0000000 50 4b 03 04 14 00 08 00 08 00 00 00 00 00 00 00
@@ -928,7 +927,7 @@ func biggestZipBytes() []byte {
 
 func returnBigZipBytes() (r io.ReaderAt, size int64) {
 	b := biggestZipBytes()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		r, err := Open(SourceFromReaderAt(bytes.NewReader(b), int64(len(b))))
 		if err != nil {
 			panic(err)
