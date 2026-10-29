@@ -417,7 +417,7 @@ func suffixIsZip64(t *testing.T, zip sizedReaderAt) bool {
 		return false
 	}
 
-	dirOff, err := findDirectory64End(SourceFromReaderAt(zip, zip.Size()),
+	dirOff, err := findDirectory64End(t.Context(), SourceFromReaderAt(zip, zip.Size()),
 		zip.Size()-int64(len(d))+int64(sigOff))
 	if err != nil {
 		t.Fatalf("findDirectory64End: %v", err)

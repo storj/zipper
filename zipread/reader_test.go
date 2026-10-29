@@ -1151,11 +1151,15 @@ func TestCVE202127919(t *testing.T) {
 }
 
 // trackingSource is a Source that counts the readers it hands out which
-// haven't been closed yet.
+// haven't been closed yet, and the ranges requested without ctx.
 type trackingSource struct {
 	Source
-	open int
+	ctx        context.Context
+	open       int
+	missingCtx int
 }
+
+type trackingKey struct{}
 
 type trackedReadCloser struct {
 	io.ReadCloser
@@ -1171,7 +1175,10 @@ func (t *trackedReadCloser) Close() error {
 	return t.ReadCloser.Close()
 }
 
-func (s *trackingSource) track(rc io.ReadCloser) io.ReadCloser {
+func (s *trackingSource) track(ctx context.Context, rc io.ReadCloser) io.ReadCloser {
+	if ctx.Value(trackingKey{}) != s.ctx.Value(trackingKey{}) {
+		s.missingCtx++
+	}
 	s.open++
 	return &trackedReadCloser{ReadCloser: rc, s: s}
 }
@@ -1181,7 +1188,7 @@ func (s *trackingSource) Range(ctx context.Context, offset, length int64) (io.Re
 	if err != nil {
 		return nil, err
 	}
-	return s.track(rc), nil
+	return s.track(ctx, rc), nil
 }
 
 func (s *trackingSource) RangeFromEnd(ctx context.Context, length int64) (io.ReadCloser, int64, error) {
@@ -1189,10 +1196,10 @@ func (s *trackingSource) RangeFromEnd(ctx context.Context, length int64) (io.Rea
 	if err != nil {
 		return nil, 0, err
 	}
-	return s.track(rc), size, nil
+	return s.track(ctx, rc), size, nil
 }
 
-func TestOpenClosesSource(t *testing.T) {
+func TestOpenContextClosesSource(t *testing.T) {
 	var buf bytes.Buffer
 	zw := NewWriter(&buf)
 	w, err := zw.CreateHeader(&FileHeader{Name: "file.txt", Method: Deflate})
@@ -1209,14 +1216,18 @@ func TestOpenClosesSource(t *testing.T) {
 
 	for _, tt := range []struct {
 		name string
-		open func(*File) (io.ReadCloser, error)
+		open func(*File, context.Context) (io.ReadCloser, error)
 	}{
-		{"Open", (*File).Open},
-		{"OpenAsGzip", (*File).OpenAsGzip},
+		{"OpenContext", (*File).OpenContext},
+		{"OpenAsGzipContext", (*File).OpenAsGzipContext},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			src := &trackingSource{Source: SourceFromReaderAt(bytes.NewReader(buf.Bytes()), int64(buf.Len()))}
-			zr, err := Open(src)
+			ctx := context.WithValue(t.Context(), trackingKey{}, tt.name)
+			src := &trackingSource{
+				Source: SourceFromReaderAt(bytes.NewReader(buf.Bytes()), int64(buf.Len())),
+				ctx:    ctx,
+			}
+			zr, err := OpenContext(ctx, src)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1224,7 +1235,7 @@ func TestOpenClosesSource(t *testing.T) {
 				t.Fatalf("%d readers left open after Open", src.open)
 			}
 
-			rc, err := tt.open(zr.File[0])
+			rc, err := tt.open(zr.File[0], ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1236,6 +1247,9 @@ func TestOpenClosesSource(t *testing.T) {
 			}
 			if src.open != 0 {
 				t.Errorf("%d readers left open after Close", src.open)
+			}
+			if src.missingCtx != 0 {
+				t.Errorf("%d ranges were read without the caller's context", src.missingCtx)
 			}
 		})
 	}
